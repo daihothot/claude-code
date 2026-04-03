@@ -42,7 +42,7 @@ finalizeAgentTool()                           ← 结果汇总
 | **触发条件** | `subagent_type` 有值 | `isForkSubagentEnabled()` && 未指定类型 |
 | **System Prompt** | Agent 自身的 `getSystemPrompt()` | 继承父 Agent 的完整 System Prompt |
 | **工具池** | `assembleToolPool()` 独立组装 | 父 Agent 的原始工具池（`useExactTools: true`） |
-| **上下文** | 仅任务描述 | 父 Agent 的完整对话历史（`forkContextMessages`） |
+| **上下文** | 仅任务描述 | 父 Agent 的对话历史（会过滤未完成的 `tool_use`） |
 | **模型** | 可独立指定 | 继承父模型（`model: 'inherit'`） |
 | **权限模式** | Agent 定义的 `permissionMode` | `'bubble'`（上浮到父终端） |
 | **目的** | 专业任务委派 | Prompt Cache 命中率优化 |
@@ -66,7 +66,12 @@ Fork 子进程保留 Agent 工具（为了 cache-identical tool defs），但通
 
 ## 工具池的独立组装
 
-子 Agent 不继承父 Agent 的工具限制——它的工具池完全独立组装（`AgentTool.tsx:573-577`）：
+这里要区分两条路径：
+
+- **命名 Agent**：基础工具池会独立组装（`AgentTool.tsx:573-577`）
+- **Fork 子进程**：直接继承父 Agent 的精确工具数组（`useExactTools: true`），以保持 Prompt Cache 前缀字节一致
+
+命名 Agent 的工具池组装代码：
 
 ```typescript
 const workerPermissionContext = {
@@ -77,8 +82,8 @@ const workerTools = assembleToolPool(workerPermissionContext, appState.mcp.tools
 ```
 
 关键设计决策：
-- **权限模式独立**：子 Agent 使用 `selectedAgent.permissionMode`（默认 `acceptEdits`），不受父 Agent 当前模式的限制
-- **MCP 工具继承**：`appState.mcp.tools` 包含所有已连接的 MCP 工具，子 Agent 自动获得
+- **命名 Agent 尝试覆盖权限模式**：默认使用 `selectedAgent.permissionMode`（默认 `acceptEdits`），但父 Agent 处于 `bypassPermissions`、`acceptEdits`，以及特性开启时的 `auto` 模式时，父级模式优先
+- **MCP 工具继承**：`appState.mcp.tools` 包含所有已连接的 MCP 工具，命名 Agent 在独立组装时自动获得
 - **Agent 级 MCP 服务器**：`runAgent()` 中的 `initializeAgentMcpServers()` 可以为特定 Agent 额外连接专属 MCP 服务器
 
 ### 工具过滤的 resolveAgentTools
@@ -91,7 +96,7 @@ const resolvedTools = useExactTools
   : resolveAgentTools(agentDefinition, availableTools, isAsync).resolvedTools
 ```
 
-`resolveAgentTools()` 会根据 Agent 定义中的 `tools` 字段过滤可用工具，将 `['*']` 映射为全量工具。
+`resolveAgentTools()` 会根据 Agent 定义中的 `tools` 字段过滤可用工具，将 `['*']` 映射为全量工具。注意：Fork 路径不会走这层过滤，而是直接使用父 Agent 的 `availableTools`。
 
 ## Worktree 隔离机制
 
@@ -115,7 +120,16 @@ Worktree 生命周期：
 
 ### 异步 Agent（后台运行）
 
-当 `run_in_background=true` 或 `selectedAgent.background=true` 时，Agent 立即返回 `async_launched` 状态（`AgentTool.tsx:686-764`）：
+当 Agent 进入异步路径时，会立即返回 `async_launched` 状态（`AgentTool.tsx:686-764`）。常见触发条件包括：
+
+- `run_in_background=true`
+- `selectedAgent.background=true`
+- coordinator 模式
+- fork-subagent 实验开启
+- KAIROS / assistant 模式强制异步
+- proactive 模式激活
+
+执行链路如下：
 
 ```
 registerAsyncAgent(agentId, ...)      ← 注册到 AppState.tasks
@@ -163,7 +177,7 @@ const raceResult = await Promise.race([
 | `teammate_spawned` | agent_id + name + team_name |
 | `remote_launched` | taskId + sessionUrl + outputFile |
 
-对于一次性内置 Agent（Explore、Plan），`<usage>` 块被省略——每周节省约 1-2 Gtok 的上下文窗口。
+对于一次性内置 Agent（Explore、Plan），在**没有 worktree 信息附加**时会省略 `<usage>` 块——每周节省约 1-2 Gtok 的上下文窗口；如果结果里附带 `worktreePath/worktreeBranch`，尾部 trailer 仍会保留。
 
 ## MCP 依赖的等待机制
 

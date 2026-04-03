@@ -547,7 +547,7 @@ queryModel()
 ```ts
 const paramsFromContext = (retryContext: RetryContext) => {
   // ... 动态 beta headers、effort、task budget 配置 ...
-  
+
   // 思考模式配置（adaptive 或 enabled + budget）
   let thinking = undefined
   if (hasThinking && modelSupportsThinking(options.model)) {
