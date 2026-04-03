@@ -1,0 +1,9 @@
+docs/test-plans/**
+docs/testing-spec.md
+docs/REVISION-PLAN.md
+docs/feature-exploration-plan.md
+docs/ultraplan-implementation.md
+README_EN.md
+TODO.md
+learn/**
+src/**
