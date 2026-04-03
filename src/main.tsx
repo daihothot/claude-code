@@ -2574,7 +2574,10 @@ async function run(): Promise<CommanderCommand> {
       await processSessionStartHooks('startup', {
         forceSyncExecution: true
       });
-      gracefulShutdownSync(0);
+      // --init-only is a one-shot maintenance path. Exit immediately after
+      // hooks complete so background startup work does not keep the process
+      // alive waiting for the general shutdown pipeline to drain.
+      process.exit(0);
       return;
     }
 
